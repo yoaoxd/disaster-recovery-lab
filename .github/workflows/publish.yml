@@ -1,0 +1,47 @@
+name: Publish Python package
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish verified distributions to PyPI
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: python -m pip install build twine
+      - run: python -m unittest -v test_lab test_cli
+      - run: python -m build
+      - run: python -m twine check --strict dist/*
+      - name: Verify installed wheel outside source tree
+        run: |
+          python -m venv /tmp/dr-check
+          /tmp/dr-check/bin/python -m pip install dist/*.whl
+          cd /tmp
+          /tmp/dr-check/bin/dr-lab --help
+          /tmp/dr-check/bin/python -m disaster_recovery_lab --help
+          /tmp/dr-check/bin/python -c 'from disaster_recovery_lab import digest, check_archive; check_archive(b"backup", digest(b"backup"))'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+  publish:
+    if: inputs.publish && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
