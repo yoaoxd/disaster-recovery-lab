@@ -8,26 +8,54 @@ Built for Platform Engineers, SREs, and developers learning to test recovery pro
 
 ## Quick start
 
-Requires Git, Python 3.10+, and a running Docker engine. Allow roughly 1 GB of available memory and network access to pull PostgreSQL 17.
+Requires Python 3.10+, Git, and a running Docker engine. Allow roughly 1 GB of available memory and network access to pull PostgreSQL 17.
+
+Install the CLI in an isolated environment with [pipx](https://pipx.pypa.io/):
 
 ```sh
-git clone https://github.com/yoaoxd/disaster-recovery-lab.git
-cd disaster-recovery-lab
-python3 -m unittest -v test_lab
-python3 lab.py service-loss
+pipx install 'git+https://github.com/yoaoxd/disaster-recovery-lab.git'
+dr-lab --help
+dr-lab service-loss
 ```
+
+Or install both the command and Python library in a virtual environment:
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install 'git+https://github.com/yoaoxd/disaster-recovery-lab.git'
+dr-lab service-loss
+```
+
+On Windows, activate with `.venv\Scripts\Activate.ps1` in PowerShell. Installation is currently from GitHub, not PyPI. For reproducibility, append `@<commit-sha>` to the Git URL. The package has no Python runtime dependencies; Docker is needed only to execute a drill.
+
+## Use as a Python library
+
+```python
+from disaster_recovery_lab import main
+
+exit_code = main(["service-loss", "--output", "artifacts", "--rto-target", "180"])
+if exit_code:
+    raise RuntimeError("Recovery drill failed; inspect report.json")
+```
+
+`main(argv)` returns 0 on a passed drill and 1 on a failed drill. Like the command, invalid arguments raise `SystemExit(2)` and `--help` raises `SystemExit(0)`. Importing the module does not start Docker or create files. `check_archive(data, expected_sha256)`, `digest(data)`, and `metrics(elapsed, age, lost, rto_target, rpo_target)` are also available for verification tooling.
+
+`python -m disaster_recovery_lab service-loss` runs the same command. Existing source checkouts can still use `python3 lab.py service-loss`.
+
+## What happens during a drill
 
 The drill seeds 100 rows, takes a backup, writes one additional row, removes its own source container, and restores into a new container. A successful run prints `"status": "passed"`, verifies 100 restored rows, reports `"lost_rows": 1`, and passes a write probe. Actual timings depend on your machine; the default targets are demonstration thresholds.
 
-Look for the `Evidence:` path at the end of the output. Each run saves `report.json`, `backup.dump`, and `backup.sha256` under a unique `artifacts/` directory. Exit code 0 means the scenario passed; exit code 1 means an error or a missed recovery target.
+Look for the `Evidence:` path at the end of the output. Each drill writes `report.json`; runs that reach backup creation also save `backup.dump` and `backup.sha256` under a unique `artifacts/` directory. Exit code 0 means the scenario passed; exit code 1 means an error or a missed recovery target.
 
 ## Choose a drill
 
 | Command | Failure | What it checks |
 | --- | --- | --- |
-| `python3 lab.py data-loss` | Delete all rows after backup | Fresh restore matches the baseline and accepts writes |
-| `python3 lab.py service-loss` | Remove the source container and temporary data | Independent backup can rebuild the database |
-| `python3 lab.py corrupt-backup` | Truncate the backup archive | Checksum validation refuses the damaged archive |
+| `dr-lab data-loss` | Delete all rows after backup | Fresh restore matches the baseline and accepts writes |
+| `dr-lab service-loss` | Remove the source container and temporary data | Independent backup can rebuild the database |
+| `dr-lab corrupt-backup` | Truncate the backup archive | Checksum validation refuses the damaged archive |
 
 Both recovery drills intentionally lose the transaction written after the backup. The corruption drill passes when corruption is detected; it does not perform a restore or evaluate recovery objectives.
 
@@ -65,7 +93,7 @@ Recovery-only fields are absent from the corruption scenario. If you share resul
 Defaults: RTO 120 seconds, RPO 60 seconds. Breaching either target exits nonzero even if restoration is correct.
 
 ```sh
-python3 lab.py service-loss --rto-target 180 --rpo-target 90
+dr-lab service-loss --rto-target 180 --rpo-target 90
 ```
 
 ## Isolation and cleanup
@@ -80,11 +108,23 @@ Cleanup is best effort. After a forced termination, inspect containers labeled `
 - **Image pull fails:** check network access to the registry and available disk space. The initial image pull happens outside the recovery timer.
 - **Readiness timeout:** check Docker resources; PostgreSQL has a 60-second readiness window.
 - **Restore succeeds but status fails:** inspect `objectives_met` and measured times. Adjust targets deliberately, keeping the original report for comparison.
-- **Unit tests pass but the drill fails:** the six unit tests validate helper contracts; they do not exercise Docker or PostgreSQL restoration.
+- **Unit tests pass but the drill fails:** the unit tests validate helper and command-line contracts; they do not exercise Docker or PostgreSQL restoration.
 
 ## Validation status
 
-Run `python3 -m unittest -v test_lab` for the six unit checks and run each scenario on a Docker-enabled machine for end-to-end evidence. This repository currently has no recovery CI workflow; a passing restore must be established from an actual run and its report. No measured performance claims are published here.
+For development and local installation:
+
+```sh
+git clone https://github.com/yoaoxd/disaster-recovery-lab.git
+cd disaster-recovery-lab
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install .
+python -m unittest -v test_lab test_cli
+dr-lab --help
+```
+
+The nine unit checks do not require Docker. Run each scenario on a Docker-enabled machine for end-to-end evidence. This repository currently has no recovery CI workflow; a passing restore must be established from an actual run and its report. No measured performance claims are published here.
 
 ## Operator runbook
 
@@ -121,3 +161,4 @@ If this lab helps you practice recovery or teach your team, consider starring it
 - [PostgreSQL 17 pg_dump](https://www.postgresql.org/docs/17/app-pgdump.html)
 - [PostgreSQL 17 pg_restore](https://www.postgresql.org/docs/17/app-pgrestore.html)
 - [PostgreSQL backup and restore](https://www.postgresql.org/docs/17/backup.html)
+
